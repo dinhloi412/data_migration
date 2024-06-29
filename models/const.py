@@ -1,0 +1,8 @@
+successful_status = "successful"
+failed_status = "failed"
+created_status = "created"
+scan_type = "scan"
+import_type = "import"
+csv_file_type = ".csv"
+insert_type = "insert"
+update_type = "update"

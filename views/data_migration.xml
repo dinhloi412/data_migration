@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+
+        <record id="data_migration_form_view" model="ir.ui.view">
+            <field name="name">data_migration.form</field>
+            <field name="model">data.migration</field>
+            <field name="arch" type="xml">
+                <form string="Data migration form">
+                    <header>
+                        <button name="import_data" string="Import data" type="object"
+                            class="btn btn-success" />
+                        <button name="scan_file" string="Scan file" type="object"
+                            class="btn btn-dark" />
+                        <button name="export_column" type="object" string="Export column"
+                            class="btn btn-info" />
+                        <!-- <button name="action_test" type="object" string="Action test"
+                            class="btn btn-primary" /> -->
+                    </header>
+                    <sheet>
+                        <div class="oe_title">
+                            <label for="name" />
+                            <h1>
+                                <field name="name" placeholder="name" />
+                            </h1>
+                        </div>
+                        <group>
+                            <group>
+                                <field name="schemas" />
+                                <field name="tables" placeholder="Table name" />
+                                <field name="type" placeholder="type import" />
+                            </group>
+                            <group>
+                                <field name="categories" />
+
+                                <field name="file_import"
+                                    filename="file_name"
+                                    attrs="{'invisible': [('type', '=', 'url_import')]}"
+                                    options="{'accepted_file_extensions': 'image/*', 'accepted_file_extensions': '.csv',
+                                                'filename': 'file_name'}"
+                                />
+                                <field name="file_name" invisible="1" />
+                                <field name="url_import" placeholder="Enter your link..."
+                                    attrs="{'invisible': [('type', '=', 'file_import')]}" />
+                            </group>
+                        </group>
+                        <notebook>
+                            <page name="Import log" string="Logs">
+                                <field name="log_ids">
+                                    <tree create="false" edit="false" delete="false"
+                                        decoration-success="status == 'successful'"
+                                        decoration-danger="status== 'failed'">
+                                        <field name="message" />
+                                        <field name="status" widget="badge"
+                                            decoration-success="status == 'successful'"
+                                            decoration-danger="status== 'failed'" />
+                                        <field name="type" />
+                                        <field name="create_date" />
+                                    </tree>
+                                </field>
+                            </page>
+                        </notebook>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+        <record id="data_migration_view_tree" model="ir.ui.view">
+            <field name="name">data_migration.tree</field>
+            <field name="model">data.migration</field>
+            <field name="arch" type="xml">
+                <tree string="Data migration" decoration-success="verify == True"
+                    decoration-danger="verify == False">
+                    <field name="name" />
+                    <field name="schemas" />
+                    <field name="tables" />
+                    <field name="categories" widget="badge" />
+                    <field name="type" />
+                    <field name="verify"
+                        decoration-success="verify == 'successful'"
+                        decoration-info="verify == 'created'"
+                        decoration-danger="verify== 'failed'" />
+                    <field name="file_import" widget="binary" readonly="1" force_save="1" />
+                </tree>
+            </field>
+        </record>
+
+        <record id="data_migration_search_view" model="ir.ui.view">
+            <field name="name">data.migration.search</field>
+            <field name="model">data.migration</field>
+            <field name="arch" type="xml">
+                <search string="ModelTitle">
+                    <!--                    <group expand="1" string="Group By">-->
+                    <!--                        <filter string="Example Field" name="example_field" domain="[]"-->
+                    <!--                                context="{'group_by':'example_field'}"/>-->
+                    <!--                    </group>-->
+                </search>
+            </field>
+        </record>
+
+        <record id="data_migration_act_window" model="ir.actions.act_window">
+            <field name="name">Data Migration</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">data.migration</field>
+            <!--            <field name="view_type">form</field>-->
+            <field name="view_mode">tree,form</field>
+            <field name="help" type="html">
+                <p class="oe_view_nocontent_create">
+                    There is no examples click here to add new Data Migration.
+                </p>
+            </field>
+        </record>
+
+        <menuitem name="DataMigration" id="data_migration_menu" parent="data_migration_root"
+            action="data_migration_act_window" />
+
+    </data>
+</odoo>
