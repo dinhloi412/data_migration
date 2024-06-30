@@ -6,10 +6,9 @@ import requests
 import csv
 import pandas as pd
 from odoo import models, fields, api
-from odoo.exceptions import UserError, ValidationError
+from odoo.exceptions import UserError
 
 from .const import successful_status, failed_status, import_type, scan_type, csv_file_type, insert_type, update_type
-from .log import ImportLog
 
 
 class DataMigration(models.Model):
@@ -56,14 +55,17 @@ class DataMigration(models.Model):
             if vals.get("schemas") and vals.get("tables"):
                 table = self._get_table(vals["schemas"], vals["tables"])
                 if not table:
-                        raise UserError("can not get table")
+                    raise UserError("can not get table")
             if vals.get("type") and vals.get("type") == "url_import":
                 atts_data = requests.get(vals["url_import"])
                 vals["file_import"] = atts_data.content
+            if vals.get("file_import"):
+                print("check file import")
+                vals["verify"] = False
+            print(vals["verify"], "thisssssssssss")
             return super(DataMigration, self).write(vals)
         except Exception as e:
             raise UserError(e)
-
 
     def _get_schemas(self):
         query = """select schema_name from information_schema.schemata"""
@@ -85,9 +87,7 @@ class DataMigration(models.Model):
 
     def import_data(self):
         try:
-            self.odoo_import_database()            
-            if not self.verify:
-                self.env["data.migration"].write({"verify": True})
+            self.odoo_import_database()
             print("here")
             log_create = {
                 "status": successful_status,
@@ -96,7 +96,11 @@ class DataMigration(models.Model):
                 "data_migration_id": self.id
             }
             self.env["import.log"].create(log_create)
-            return True
+            print("success")
+            if not self.verify:
+                print("dddddddddd")
+                self.sudo().env["data.migration"].write({"verify": True})
+            return
         except Exception as e:
             log_create = {
                 "status": failed_status,
@@ -105,7 +109,7 @@ class DataMigration(models.Model):
                 "data_migration_id": self.id
             }
             self.env["import.log"].create(log_create)
-            raise ValidationError(e)
+            raise UserError(e)
 
     def scan_file(self):
         try:
@@ -116,9 +120,11 @@ class DataMigration(models.Model):
             for rec in self:
                 column_db_names = rec.get_column_db_names()
                 column_file_names = rec.read_column_from_file()
+                verify = False
+                if rec.categories == insert_type and "id" in column_db_names:
+                    column_db_names.remove("id")
                 print(column_db_names, "column_db_names")
                 print(column_file_names, "column_file_names")
-                verify = False
                 if rec.array_strings_are_equal(column_db_names, column_file_names):
                     print("test herd")
                     verify = True
@@ -156,7 +162,7 @@ class DataMigration(models.Model):
                 return True
             return False
         except Exception as e:
-            return f"can not compare data: {e}"
+            raise Exception(f"can not compare data: {e}")
 
     def _action_notification(self, title: str, message: str, type: str):
         return {
@@ -191,24 +197,40 @@ class DataMigration(models.Model):
         try:
             file_data = io.BytesIO(base64.b64decode(self.file_import))
             df = pd.read_csv(file_data)
+            df = df.where(pd.notnull(df), None)
             columns = df.columns.tolist()
             print(columns, "columns")
-            raw_query = "'"
-            if self.type == insert_type:
-                raw_query = """ INSERT INTO {}.{} ({}) VALUES ({})""".format(self.schemas, self.tables, ', '.join(columns),
+            raw_query = ""
+            print(self.categories, "self.type")
+            if self.categories == insert_type:
+                raw_query = """INSERT INTO {}.{} ({}) VALUES ({})""".format(self.schemas, self.tables,
+                                                                            ', '.join(columns),
                                                                             ', '.join(['%s'] * len(columns)))
-            if self.categories == update_type:
+                for _, row in df.iterrows():
+                    values = tuple([None if pd.isnull(val) else val for val in row])
+                    self.env.cr.execute(raw_query, values)
+            elif self.categories == update_type:
                 update_query = """ UPDATE "{}"."{}" SET """.format(self.schemas, self.tables)
                 update_columns = ', '.join('{} = %s'.format(col) for col in columns)
-                update_query += update_columns + " WHERE id = %s"  # Specify your update condition
-                raw_query = update_query   
+                update_query += update_columns + " WHERE id = %s"
+                raw_query = update_query
+                for _, row in df.iterrows():
+                    values = tuple([None if pd.isnull(val) else val for val in row])
+                    values += (row['id'],)
+
+                    self.env.cr.execute(update_query, values)
 
             print(raw_query, "raw_query")
-             
-            # update_query = """ UPDATE {}.{}
-            for _, row in df.iterrows():
-                values = tuple(row)
-                self.env.cr.execute(raw_query, values)
+
+            # values = []
+            # for val in row:
+            #     if pd.isnull(val):
+            #         values.append(None)
+            #     else:
+            #         values.append(val)
+            #
+            # values = tuple(values)
+
             return True
         except Exception as e:
             raise Exception(f"cannot import into database: {e}")
@@ -220,16 +242,21 @@ class DataMigration(models.Model):
                 return True
             return False
         except Exception as e:
-            return f"invalid file type: {e}"
+            raise Exception(f"invalid file type: {e}")
 
     def export_column(self):
         try:
-            query = """select * from %s.%s limit 1""" % (self.schemas, self.tables)
+            print("export column")
+            query = """select COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS where table_schema = '%s' and table_name = '%s' """ % (
+                self.schemas, self.tables)
+            print(query, "query1")
             self.env.cr.execute(query)
             res = self.env.cr.dictfetchall()
             print(res, "res")
             if len(res) > 0:
-                column_names = list(res[0].keys())
+                column_names = [r["column_name"] for r in res]
+                # column_names = list(res[0].values())
+                print(column_names, "ccolumn_names")
                 # Create CSV content
                 output = io.StringIO()
                 csv_writer = csv.writer(output)
@@ -237,7 +264,7 @@ class DataMigration(models.Model):
                 output.seek(0)
                 csv_content = output.getvalue().encode('utf-8')
                 output.close()
-                file_name_download =f"{self.name}.csv"
+                file_name_download = f"{self.name}.csv"
                 # Create attachment
                 attachment_id = self.env['ir.attachment'].sudo().create({
                     'name': file_name_download,
@@ -245,7 +272,7 @@ class DataMigration(models.Model):
                     'res_id': self.id,
                     'type': "binary",
                     'store_fname': file_name_download,
-                    'datas': base64.b64encode(csv_content)  #import base64
+                    'datas': base64.b64encode(csv_content)  # import base64
                 })
 
                 # Construct download URL
@@ -263,6 +290,8 @@ class DataMigration(models.Model):
         except Exception as e:
             raise UserError("failed to export column")
 
+    def check_id_is_exist(self):
+        pass
     # def read_file_from_url(self):
     #     get_content = requests.get(self.url_import).content
     #     pass
@@ -278,5 +307,3 @@ class DataMigration(models.Model):
     #             'default_schema': self.schemas,
     #         },
     #     }
-  
-    
