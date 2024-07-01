@@ -14,6 +14,7 @@ from .const import successful_status, failed_status, import_type, scan_type, csv
 class DataMigration(models.Model):
     _name = 'data.migration'
     _description = 'Data Migration'
+    _inherit = "mail.thread"
 
     name = fields.Char(string="Name", required=True)
     schemas = fields.Selection(
@@ -38,31 +39,24 @@ class DataMigration(models.Model):
             table = self._get_table(vals["schemas"], vals["tables"])
             if not table:
                 raise UserError("can not get table")
-            if vals["type"] == "url_import":
-                atts_data = requests.get(vals["url_import"])
-                print(atts_data.content, "content")
-                vals["file_import"] = atts_data.content
-                print(atts_data.status_code, "status code")
-                print(atts_data, "atts_data")
+            # if vals["type"] == "url_import":
+            #     atts_data = requests.get(vals["url_import"])
+            #     vals["file_import"] = atts_data.content
             return super(DataMigration, self).create(vals)
         except Exception as e:
             raise UserError(e)
 
     def write(self, vals):
         try:
-            # print(vals, "vals")
-            # print(vals.get("schemas"), "aaa")
             if vals.get("schemas") and vals.get("tables"):
                 table = self._get_table(vals["schemas"], vals["tables"])
                 if not table:
                     raise UserError("can not get table")
-            if vals.get("type") and vals.get("type") == "url_import":
-                atts_data = requests.get(vals["url_import"])
-                vals["file_import"] = atts_data.content
-            if vals.get("file_import"):
-                print("check file import")
-                vals["verify"] = False
-            print(vals["verify"], "thisssssssssss")
+            # if vals.get("url_import"):
+                # atts_data = requests.get(vals["url_import"])
+                # print(atts_data.content, "atts_data")
+                # vals["file_import"] = base64.b64encode(atts_data.content)
+                vals["verify"] = False                       
             return super(DataMigration, self).write(vals)
         except Exception as e:
             raise UserError(e)
@@ -78,7 +72,6 @@ class DataMigration(models.Model):
         try:
             query = """SELECT table_name FROM information_schema.tables WHERE table_schema = '%s' and table_name = '%s'""" % (
                 schema, table_name)
-            print(query, "query")
             self.env.cr.execute(query)
             res = self.env.cr.dictfetchone()
             return res
@@ -87,19 +80,19 @@ class DataMigration(models.Model):
 
     def import_data(self):
         try:
-            self.odoo_import_database()
-            print("here")
+            if not self.verify:
+                raise UserError("file not verified")
+            total_rows = self.odoo_import_database()
             log_create = {
                 "status": successful_status,
                 "message": successful_status,
                 "type": import_type,
-                "data_migration_id": self.id
+                "data_migration_id": self.id,
+                "total_records": int(total_rows)
             }
             self.env["import.log"].create(log_create)
-            print("success")
             if not self.verify:
-                print("dddddddddd")
-                self.sudo().env["data.migration"].write({"verify": True})
+                self.write({"verify": True})
             return
         except Exception as e:
             log_create = {
@@ -115,21 +108,27 @@ class DataMigration(models.Model):
         try:
             if not self.file_import:
                 raise UserError("file does not exist")
-            message = failed_status
-            status = failed_status
+            message = successful_status
+            status = successful_status
             for rec in self:
                 column_db_names = rec.get_column_db_names()
                 column_file_names = rec.read_column_from_file()
-                verify = False
-                if rec.categories == insert_type and "id" in column_db_names:
+                verify = True
+                if rec.categories == insert_type:
                     column_db_names.remove("id")
-                print(column_db_names, "column_db_names")
-                print(column_file_names, "column_file_names")
-                if rec.array_strings_are_equal(column_db_names, column_file_names):
-                    print("test herd")
-                    verify = True
-                    message = successful_status
-                    status = successful_status
+                    if "id" in column_file_names:
+                        verify = False
+                        message = "id cannot exist while in creation state"
+                        status = failed_status
+                elif rec.categories == update_type:
+                    if not self.check_id_is_exist():
+                        verify = False
+                        message = "id does not exist in the database"
+                        status = failed_status
+                elif not array_strings_are_equal(column_db_names, column_file_names):
+                    verify = False
+                    message = "column is not in the database"
+                    status = failed_status
                 rec.update_data(verify)
                 log_create = {
                     "status": status,
@@ -150,58 +149,45 @@ class DataMigration(models.Model):
         except Exception as e:
             return e
 
-    def array_strings_are_equal(self, data1: list, data2: list) -> Union[bool, str]:
-        try:
-            print(data1, data2, "array strings are")
-            joined_word1 = "".join(data1)
-            joined_word2 = "".join(data2)
-            print(joined_word1, "joined_word1")
-            print(joined_word2, "joined_word2")
-
-            if joined_word1 == joined_word2:
-                return True
-            return False
-        except Exception as e:
-            raise Exception(f"can not compare data: {e}")
-
-    def _action_notification(self, title: str, message: str, type: str):
-        return {
-            'type': 'ir.actions.client',
-            'tag': 'display_notification',
-            'params': {
-                'title': title,
-                'type': type,
-                'message': message,
-                'sticky': True,
-            }
-        }
+    def read_data_from_file(self):
+        file_data = io.BytesIO(base64.b64decode(self.file_import))
+        df = pd.read_csv(file_data,  error_bad_lines=False)
+        return df
 
     def read_column_from_file(self) -> list:
-        file_data = io.BytesIO(base64.b64decode(self.file_import))
-        df = pd.read_csv(file_data)
+        try:
+            df = self.read_data_from_file()
+            column_names = list(df.columns.values)
+            return column_names
+        except Exception as e:
+            raise Exception(f"cannot read column: {e}")
+
+    def read_data_from_url(self):
+        data = requests.get(self.url_import)
+        csv_content = data.content.decode('utf-8')
+        df = pd.read_csv(io.StringIO(csv_content))
+        return df
+        
+    def read_column_from_url(self):
+        df = self.read_data_from_url()
         column_names = list(df.columns.values)
-        print(column_names, "")
-        return column_names
+        print(column_names, "column_names")
+        pass
 
     def get_column_db_names(self) -> list:
         query = """SELECT column_name FROM information_schema.columns WHERE table_schema = '%s' AND table_name = '%s'""" % (
             self.schemas, self.tables)
-        print(query, "query")
         self.env.cr.execute(query)
         res = self.env.cr.dictfetchall()
         column = [r['column_name'] for r in res]
-        print(column, "column")
         return column
 
     def odoo_import_database(self):
         try:
             file_data = io.BytesIO(base64.b64decode(self.file_import))
-            df = pd.read_csv(file_data)
-            df = df.where(pd.notnull(df), None)
+            df = pd.read_csv(file_data, error_bad_lines=False)
             columns = df.columns.tolist()
-            print(columns, "columns")
-            raw_query = ""
-            print(self.categories, "self.type")
+            total_rows = df.shape[0]
             if self.categories == insert_type:
                 raw_query = """INSERT INTO {}.{} ({}) VALUES ({})""".format(self.schemas, self.tables,
                                                                             ', '.join(columns),
@@ -211,16 +197,13 @@ class DataMigration(models.Model):
                     self.env.cr.execute(raw_query, values)
             elif self.categories == update_type:
                 update_query = """ UPDATE "{}"."{}" SET """.format(self.schemas, self.tables)
-                update_columns = ', '.join('{} = %s'.format(col) for col in columns)
+                update_columns = ', '.join(
+                    '{} = %s'.format(col) for col in columns if col != 'id')  # Exclude 'id' column
                 update_query += update_columns + " WHERE id = %s"
-                raw_query = update_query
                 for _, row in df.iterrows():
-                    values = tuple([None if pd.isnull(val) else val for val in row])
+                    values = tuple([None if pd.isnull(val) else val for col, val in row.items() if col != 'id'])
                     values += (row['id'],)
-
                     self.env.cr.execute(update_query, values)
-
-            print(raw_query, "raw_query")
 
             # values = []
             # for val in row:
@@ -231,13 +214,12 @@ class DataMigration(models.Model):
             #
             # values = tuple(values)
 
-            return True
+            return total_rows
         except Exception as e:
             raise Exception(f"cannot import into database: {e}")
 
     def check_file_type(self):
         try:
-            print(self.file_name.endswith, "self.file_name.endswith")
             if self.file_name.endswith(csv_file_type):
                 return True
             return False
@@ -246,17 +228,12 @@ class DataMigration(models.Model):
 
     def export_column(self):
         try:
-            print("export column")
             query = """select COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS where table_schema = '%s' and table_name = '%s' """ % (
                 self.schemas, self.tables)
-            print(query, "query1")
             self.env.cr.execute(query)
             res = self.env.cr.dictfetchall()
-            print(res, "res")
             if len(res) > 0:
                 column_names = [r["column_name"] for r in res]
-                # column_names = list(res[0].values())
-                print(column_names, "ccolumn_names")
                 # Create CSV content
                 output = io.StringIO()
                 csv_writer = csv.writer(output)
@@ -286,12 +263,37 @@ class DataMigration(models.Model):
                     "target": "new"
                 }
 
-            # print(data, "data")
         except Exception as e:
-            raise UserError("failed to export column")
+            raise UserError(e)
 
-    def check_id_is_exist(self):
-        pass
+    def check_id_is_exist(self) -> bool:
+        try:
+            df = self.read_data_from_file()
+            if "id" in df.columns:
+                id_values = df["id"].astype(str).tolist()
+                placeholders = ', '.join(['%s'] * len(id_values))
+                query = """SELECT id FROM %s.%s where id in (%s)""" % (self.schemas, self.tables, placeholders)
+                self.env.cr.execute(query, tuple(id_values))
+                res = self.env.cr.dictfetchall()
+                if len(res) == len(id_values):
+                    return True
+                return False
+            else:
+                raise UserError("No 'id' column found in CSV data")
+        except Exception as e:
+            raise UserError(e)
+
+    # def _action_notification(self, title: str, message: str, type: str):
+    #     return {
+    #         'type': 'ir.actions.client',
+    #         'tag': 'di@splay_notification',
+    #         'params': {
+    #             'title': title,
+    #             'type': type,
+    #             'message': message,
+    #             'sticky': True,
+    #         }
+    #     }
     # def read_file_from_url(self):
     #     get_content = requests.get(self.url_import).content
     #     pass
@@ -307,3 +309,18 @@ class DataMigration(models.Model):
     #             'default_schema': self.schemas,
     #         },
     #     }
+
+
+def array_strings_are_equal(self, data1: list, data2: list) -> Union[bool, str]:
+    try:
+        joined_word1 = "".join(data1)
+        joined_word2 = "".join(data2)
+
+        if joined_word1 == joined_word2:
+            return True
+        return False
+    except Exception as e:
+        raise Exception(f"can not compare data: {e}")
+
+
+

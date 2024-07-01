@@ -3,6 +3,8 @@
     <data>
 
         <!-- This Menu Item will appear in the Upper bar, That's why It needs NO parent or action -->
-        <menuitem id="data_migration_root" name="Data Migration" sequence="1"/>
+        <menuitem id="data_migration_root" name="Data Migration" sequence="1"
+        web_icon="data_migration,static/description/icon.png"/>
+        />
     </data>
 </odoo>

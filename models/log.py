@@ -14,6 +14,6 @@ class ImportLog(models.Model):
 
     type = fields.Char(string='Type')
     data_migration_id = fields.Many2one("data.migration", string="data migration")
-
+    total_records = fields.Integer(string="Total records")
 
 
