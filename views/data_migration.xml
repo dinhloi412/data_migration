@@ -103,6 +103,7 @@
                     <searchpanel>
                         <field name="type" string="Type" enable_counter="1" />
                         <field name="schemas" string="schemas" enable_counter="1" />
+                        <field name="categories" string="categories" enable_counter="1" />
 
                     </searchpanel>
                 </search>
