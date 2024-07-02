@@ -168,8 +168,10 @@ class DataMigration(models.Model):
 
     def read_data_from_url(self):
         response = requests.get(self.url_import)
-        csv_data = pd.read_csv(io.StringIO(response.content.decode('utf-8')))
-        return csv_data
+        if response.status_code == 200:
+            csv_data = pd.read_csv(io.StringIO(response.content.decode('utf-8')))
+            return csv_data
+        return None
         
     def read_column_from_url(self):
         df = self.read_data_from_url()
@@ -273,7 +275,11 @@ class DataMigration(models.Model):
 
     def check_id_is_exist(self) -> bool:
         try:
-            df = self.read_data_from_file()
+            df = None
+            if self.type == const.url_import_type:
+                df = self.read_data_from_url()
+            else:
+                df = self.read_data_from_file()
             if "id" in df.columns:
                 id_values = df["id"].astype(str).tolist()
                 placeholders = ', '.join(['%s'] * len(id_values))
