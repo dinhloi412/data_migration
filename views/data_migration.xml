@@ -14,8 +14,6 @@
                             class="btn btn-dark" />
                         <button name="export_column" type="object" string="Export column"
                             class="btn btn-info" />
-                        <button name="read_column_from_url" type="object" string="Data test"
-                            class="btn btn-info" />
                     </header>
                     <sheet>
                         <div class="oe_title">

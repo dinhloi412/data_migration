@@ -5,10 +5,11 @@ from typing import Union
 import requests
 import csv
 import pandas as pd
+import csv
 from odoo import models, fields, api
 from odoo.exceptions import UserError
 
-from .const import successful_status, failed_status, import_type, scan_type, csv_file_type, insert_type, update_type
+from . import const
 
 
 class DataMigration(models.Model):
@@ -54,7 +55,6 @@ class DataMigration(models.Model):
                     raise UserError("can not get table")
             # if vals.get("url_import"):
                 # atts_data = requests.get(vals["url_import"])
-                # print(atts_data.content, "atts_data")
                 # vals["file_import"] = base64.b64encode(atts_data.content)
                 vals["verify"] = False                       
             return super(DataMigration, self).write(vals)
@@ -84,9 +84,9 @@ class DataMigration(models.Model):
                 raise UserError("file not verified")
             total_rows = self.odoo_import_database()
             log_create = {
-                "status": successful_status,
-                "message": successful_status,
-                "type": import_type,
+                "status": const.successful_status,
+                "message": const.successful_status,
+                "type": const.import_type,
                 "data_migration_id": self.id,
                 "total_records": int(total_rows)
             }
@@ -96,9 +96,9 @@ class DataMigration(models.Model):
             return
         except Exception as e:
             log_create = {
-                "status": failed_status,
+                "status": const.failed_status,
                 "message": str(e),
-                "type": import_type,
+                "type": const.import_type,
                 "data_migration_id": self.id
             }
             self.env["import.log"].create(log_create)
@@ -106,34 +106,38 @@ class DataMigration(models.Model):
 
     def scan_file(self):
         try:
-            if not self.file_import:
+            if not self.file_import or not self.url_import:
                 raise UserError("file does not exist")
-            message = successful_status
-            status = successful_status
+            message = const.successful_status
+            status = const.successful_status
             for rec in self:
+                column_file_names = []
                 column_db_names = rec.get_column_db_names()
-                column_file_names = rec.read_column_from_file()
+                if rec.type == const.file_import_type:
+                    column_file_names = rec.read_column_from_file()
+                else:
+                    column_file_names =  rec.read_column_from_url()
                 verify = True
-                if rec.categories == insert_type:
+                if rec.categories == const.insert_type:
                     column_db_names.remove("id")
                     if "id" in column_file_names:
                         verify = False
                         message = "id cannot exist while in creation state"
-                        status = failed_status
-                elif rec.categories == update_type:
+                        status = const.failed_status
+                elif rec.categories == const.update_type:
                     if not self.check_id_is_exist():
                         verify = False
                         message = "id does not exist in the database"
-                        status = failed_status
+                        status = const.failed_status
                 elif not array_strings_are_equal(column_db_names, column_file_names):
                     verify = False
                     message = "column is not in the database"
-                    status = failed_status
+                    status = const.failed_status
                 rec.update_data(verify)
                 log_create = {
                     "status": status,
                     "message": message,
-                    "type": scan_type,
+                    "type": const.scan_type,
                     "data_migration_id": self.id
                 }
                 self.env["import.log"].create(log_create)
@@ -163,16 +167,13 @@ class DataMigration(models.Model):
             raise Exception(f"cannot read column: {e}")
 
     def read_data_from_url(self):
-        data = requests.get(self.url_import)
-        csv_content = data.content.decode('utf-8')
-        df = pd.read_csv(io.StringIO(csv_content))
-        return df
+        response = requests.get(self.url_import)
+        csv_data = pd.read_csv(io.StringIO(response.content.decode('utf-8')))
+        return csv_data
         
     def read_column_from_url(self):
         df = self.read_data_from_url()
-        column_names = list(df.columns.values)
-        print(column_names, "column_names")
-        pass
+        return df.columns.tolist()
 
     def get_column_db_names(self) -> list:
         query = """SELECT column_name FROM information_schema.columns WHERE table_schema = '%s' AND table_name = '%s'""" % (
@@ -184,18 +185,22 @@ class DataMigration(models.Model):
 
     def odoo_import_database(self):
         try:
-            file_data = io.BytesIO(base64.b64decode(self.file_import))
-            df = pd.read_csv(file_data, error_bad_lines=False)
+           
+            if self.type == const.url_import_type:
+                df = self.read_data_from_url()
+            else:
+                file_data = io.BytesIO(base64.b64decode(self.file_import))
+                df = pd.read_csv(file_data, error_bad_lines=False)
             columns = df.columns.tolist()
             total_rows = df.shape[0]
-            if self.categories == insert_type:
+            if self.categories == const.insert_type:
                 raw_query = """INSERT INTO {}.{} ({}) VALUES ({})""".format(self.schemas, self.tables,
                                                                             ', '.join(columns),
                                                                             ', '.join(['%s'] * len(columns)))
                 for _, row in df.iterrows():
                     values = tuple([None if pd.isnull(val) else val for val in row])
                     self.env.cr.execute(raw_query, values)
-            elif self.categories == update_type:
+            elif self.categories == const.update_type:
                 update_query = """ UPDATE "{}"."{}" SET """.format(self.schemas, self.tables)
                 update_columns = ', '.join(
                     '{} = %s'.format(col) for col in columns if col != 'id')  # Exclude 'id' column
@@ -220,7 +225,7 @@ class DataMigration(models.Model):
 
     def check_file_type(self):
         try:
-            if self.file_name.endswith(csv_file_type):
+            if self.file_name.endswith(const.csv_file_type):
                 return True
             return False
         except Exception as e:
