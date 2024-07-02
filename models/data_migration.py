@@ -106,8 +106,8 @@ class DataMigration(models.Model):
 
     def scan_file(self):
         try:
-            if not self.file_import or not self.url_import:
-                raise UserError("file does not exist")
+            if not self.file_import and not self.url_import:
+                raise UserError("file or url does not exist")
             message = const.successful_status
             status = const.successful_status
             for rec in self:
