@@ -155,7 +155,7 @@ class DataMigration(models.Model):
 
     def read_data_from_file(self):
         file_data = io.BytesIO(base64.b64decode(self.file_import))
-        df = pd.read_csv(file_data,  error_bad_lines=False)
+        df = pd.read_csv(file_data)
         return df
 
     def read_column_from_file(self) -> list:
@@ -190,7 +190,7 @@ class DataMigration(models.Model):
                 df = self.read_data_from_url()
             else:
                 file_data = io.BytesIO(base64.b64decode(self.file_import))
-                df = pd.read_csv(file_data, error_bad_lines=False)
+                df = pd.read_csv(file_data)
             columns = df.columns.tolist()
             total_rows = df.shape[0]
             if self.categories == const.insert_type:
